@@ -3,6 +3,7 @@ import { PrdEditor, TEMPLATES } from './components/PrdEditor';
 import { AgentTerminal } from './components/AgentTerminal';
 import { DashboardPreview } from './components/DashboardPreview';
 import { CodeExporter } from './components/CodeExporter';
+import { ComponentTree } from './components/ComponentTree';
 import { MemoryInspector } from './components/MemoryInspector';
 import { Orchestrator } from './agents/Orchestrator';
 import type { PipelineSession } from './agents/types';
@@ -12,7 +13,7 @@ import './App.css';
 function App() {
   const [prdText, setPrdText] = useState<string>(TEMPLATES.fuel_optimizer.text);
   const [apiKey, setApiKey] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<'preview' | 'code' | 'memory'>('preview');
+  const [activeTab, setActiveTab] = useState<'preview' | 'tree' | 'code' | 'memory'>('preview');
   const [refreshToggle, setRefreshToggle] = useState<boolean>(false);
   const [session, setSession] = useState<PipelineSession>({
     status: 'idle',
@@ -93,7 +94,7 @@ function App() {
                 <span className="w-2.5 h-2.5 rounded-full bg-indigo-500 mr-2.5 inline-block"></span>
                 3. Output Terminal
               </h2>
-              <div className="flex bg-slate-955 border border-slate-850 p-1 rounded-lg">
+              <div className="flex flex-wrap justify-end gap-0.5 bg-slate-955 border border-slate-850 p-1 rounded-lg">
                 <button
                   onClick={() => setActiveTab('preview')}
                   className={`text-[9px] font-bold px-2 py-1 rounded transition ${
@@ -103,6 +104,16 @@ function App() {
                   }`}
                 >
                   Live Preview
+                </button>
+                <button
+                  onClick={() => setActiveTab('tree')}
+                  className={`text-[9px] font-bold px-2 py-1 rounded transition ${
+                    activeTab === 'tree'
+                      ? 'bg-indigo-600 text-white font-black'
+                      : 'text-slate-500 hover:text-slate-300'
+                  }`}
+                >
+                  Component Tree
                 </button>
                 <button
                   onClick={() => setActiveTab('code')}
@@ -130,8 +141,8 @@ function App() {
             {/* Tab Contents Frame */}
             <div className="flex-1 flex flex-col min-h-64">
               {activeTab === 'preview' && (
-                <div className="flex-1 flex flex-col">
-                  {isLoading ? (
+                <div className="flex-1 flex flex-col min-h-0">
+                  {isLoading && !session.layout ? (
                     <div className="flex-1 flex flex-col items-center justify-center text-slate-500 text-center py-20">
                       <RefreshCw className="w-8 h-8 text-indigo-500 animate-spin mb-3" />
                       <h4 className="text-white text-xs font-bold uppercase tracking-wider">Compiling Components...</h4>
@@ -141,6 +152,22 @@ function App() {
                     </div>
                   ) : (
                     <DashboardPreview layout={session.layout} />
+                  )}
+                </div>
+              )}
+
+              {activeTab === 'tree' && (
+                <div className="flex-1 flex flex-col min-h-0">
+                  {isLoading && !session.layout ? (
+                    <div className="flex-1 flex flex-col items-center justify-center text-slate-500 text-center py-20">
+                      <RefreshCw className="w-8 h-8 text-indigo-500 animate-spin mb-3" />
+                      <h4 className="text-white text-xs font-bold uppercase tracking-wider">Architect Analyzing PRD...</h4>
+                      <p className="text-[10px] text-slate-550 mt-1 max-w-xs leading-normal">
+                        Widget hierarchy will appear here once the Architect agent finishes structural analysis.
+                      </p>
+                    </div>
+                  ) : (
+                    <ComponentTree layout={session.layout} />
                   )}
                 </div>
               )}
