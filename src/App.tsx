@@ -1,5 +1,14 @@
-import { useState } from 'react';
-import { PrdEditor, TEMPLATES } from './components/PrdEditor';
+import { useEffect, useState } from 'react';
+import { PrdEditor } from './components/PrdEditor';
+import {
+  loadAisKey,
+  loadGroqKey,
+  loadLiveConfig,
+  saveAisKey,
+  saveGroqKey,
+  saveLiveConfig,
+  type LiveDataConfig
+} from './liveData/apiConfig';
 import { AgentTerminal } from './components/AgentTerminal';
 import { DashboardPreview } from './components/DashboardPreview';
 import { CodeExporter } from './components/CodeExporter';
@@ -10,8 +19,22 @@ import { Anchor, Cpu, RefreshCw } from 'lucide-react';
 import './App.css';
 
 function App() {
-  const [prdText, setPrdText] = useState<string>(TEMPLATES.fuel_optimizer.text);
-  const [apiKey, setApiKey] = useState<string>('');
+  const [prdText, setPrdText] = useState<string>('');
+  const [apiKey, setApiKey] = useState<string>(() => loadGroqKey());
+  const [aisApiKey, setAisApiKey] = useState<string>(() => loadAisKey());
+  const [liveConfig, setLiveConfig] = useState<LiveDataConfig>(() => loadLiveConfig());
+
+  useEffect(() => {
+    saveGroqKey(apiKey);
+  }, [apiKey]);
+
+  useEffect(() => {
+    saveAisKey(aisApiKey);
+  }, [aisApiKey]);
+
+  useEffect(() => {
+    saveLiveConfig(liveConfig);
+  }, [liveConfig]);
   const [activeTab, setActiveTab] = useState<'preview' | 'code' | 'memory'>('preview');
   const [refreshToggle, setRefreshToggle] = useState<boolean>(false);
   const [session, setSession] = useState<PipelineSession>({
@@ -50,13 +73,23 @@ function App() {
                 Mini Project
               </span>
             </h1>
-            <p className="text-[10px] text-slate-400 font-medium">ThinkPalm Maritime Claude Agent Pipeline</p>
+            <p className="text-[10px] text-slate-400 font-medium">ThinkPalm Maritime Groq Agent Pipeline</p>
           </div>
         </div>
 
-        <div className="flex items-center space-x-2 bg-slate-950 border border-slate-850 px-3 py-1.5 rounded-lg text-[9px] text-slate-500 font-extrabold tracking-wider uppercase">
-          <Cpu className="w-3.5 h-3.5 text-indigo-400" />
-          <span>Claude 3.5 Sonnet Pipeline Ready</span>
+        <div className="flex items-center gap-2">
+          <div className={`flex items-center space-x-2 border px-3 py-1.5 rounded-lg text-[9px] font-extrabold tracking-wider uppercase ${
+            liveConfig.enabled
+              ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400'
+              : 'bg-slate-950 border-slate-850 text-slate-500'
+          }`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${liveConfig.enabled ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'}`} />
+            <span>{liveConfig.enabled ? `Live Telemetry · ${liveConfig.pollIntervalSec}s` : 'Simulation Mode'}</span>
+          </div>
+          <div className="flex items-center space-x-2 bg-slate-950 border border-slate-850 px-3 py-1.5 rounded-lg text-[9px] text-slate-500 font-extrabold tracking-wider uppercase">
+            <Cpu className="w-3.5 h-3.5 text-indigo-400" />
+            <span>{apiKey.trim() ? 'Groq Connected' : 'Local Pipeline'}</span>
+          </div>
         </div>
       </header>
 
@@ -71,6 +104,10 @@ function App() {
               setPrdText={setPrdText}
               apiKey={apiKey}
               setApiKey={setApiKey}
+              aisApiKey={aisApiKey}
+              setAisApiKey={setAisApiKey}
+              liveConfig={liveConfig}
+              setLiveConfig={setLiveConfig}
               onGenerate={handleGenerate}
               isLoading={isLoading}
             />
@@ -141,7 +178,11 @@ function App() {
                       </p>
                     </div>
                   ) : (
-                    <DashboardPreview layout={session.layout} />
+                    <DashboardPreview
+                      layout={session.layout}
+                      aisApiKey={aisApiKey}
+                      liveConfig={liveConfig}
+                    />
                   )}
                 </div>
               )}

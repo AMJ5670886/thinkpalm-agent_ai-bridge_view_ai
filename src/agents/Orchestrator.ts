@@ -39,7 +39,7 @@ export class Orchestrator {
     };
 
     try {
-      addLog('System', 'info', 'Pipeline initialized. Allocating Claude agents...');
+      addLog('System', 'info', 'Pipeline initialized. Allocating Groq agents...');
       
       // Step 1: Maritime Architect Agent
       session.status = 'analyzing';

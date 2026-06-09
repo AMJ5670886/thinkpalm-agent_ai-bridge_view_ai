@@ -1,59 +1,30 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
+import { validatePRD, type PrdCheckStatus } from '../agents/PrdParser';
+import type { LiveDataConfig } from '../liveData/apiConfig';
+import { ApiSettingsPanel, detectDomainFromValidation } from './ApiSettingsPanel';
 
-export const TEMPLATES = {
-  fuel_optimizer: {
-    title: 'Vessel Fuel & Speed Optimizer',
-    text: `ThinkPalm - Product Requirements Document
-System: Vessel Fuel & Speed Optimization Dashboard (Model: VFO-200)
-
-1. Purpose
-Monitor propulsion efficiency by linking main engine speed commands (RPM) with fuel oil flow rates. Highlight eco-speeds.
-
-2. UI Widgets Required:
-- Main Engine Speed gauge (RPM, range 0-120)
-- Fuel Oil Flow Rate gauge (L/h, range 0-1200, amber color, threshold alert at 1000 L/h)
-- Telemetry summary card (vessel speed in knots, heading in degrees, GPS position)
-- Propulsion Mode Selector control panel (Options: Eco Speed, Full Speed, Dynamic Positioning, Manual Helm)
-- Safety & System Alarms log list
-- Operational Fuel Efficiency chart (tracking Specific Fuel Consumption over the last 12 hours)`
-  },
-  crew_welfare: {
-    title: 'Crew Welfare & Watch Portal',
-    text: `ThinkPalm - Product Requirements Document
-System: Crew Welfare & Watch Safety Portal (Model: CWW-Alpha)
+const PRD_PLACEHOLDER = `ThinkPalm - Product Requirements Document
+System: Your Dashboard Name Here
 
 1. Purpose
-Monitor crew watch compliance, active personnel status, safety violations, and fresh water storage levels on passenger ferries.
+Describe what this dashboard should monitor or control.
 
 2. UI Widgets Required:
-- Crew On Duty metric panel (number of pax active, emerald color)
-- Crew Rest Hours Compliance chart (percent, tracking rest schedules over 12 hours)
-- Fresh Water Level gauge (m³ volume, range 0-200, cyan color, warning alert if below 25 m³)
-- Safety Incidents Alert List panel (tracking compliance warnings)
-- Watch Duty Mode Selector control panel (Options: Normal Voyage, Harbor Watch, Emergency Stations, Port Stay)`
-  },
-  ballast_indicator: {
-    title: 'Ballast Water & Tank Level Indicator',
-    text: `ThinkPalm - Product Requirements Document
-System: Ballast Water Level indicator Dashboard (Model: BWM-900)
-
-1. Purpose
-Display current ballast water levels and pump states across the cargo hold to maintain vessel trim and stability.
-
-2. UI Widgets Required:
-- Ballast Water Level gauge (%, range 0-100, blue color)
-- Vessel Roll Angle gauge (°, range -15 to 15, indigo color)
-- Vessel Trim metric panel (m, range -5 to 5)
-- Ballast Pump Control panel (Options: AUTO, MANUAL, SHUTDOWN)
-- Alarm logs for tank overflow and structural listing`
-  }
-};
+- Widget Name gauge (unit, range 0-100, color, threshold alert at 80)
+- Another Widget metric panel (unit, color)
+- Mode Selector control panel (Options: Option A, Option B, Option C)
+- Safety Alarms log list
+- Performance chart (tracking metric over time)`;
 
 interface PrdEditorProps {
   prdText: string;
   setPrdText: (text: string) => void;
   apiKey: string;
   setApiKey: (key: string) => void;
+  aisApiKey: string;
+  setAisApiKey: (key: string) => void;
+  liveConfig: LiveDataConfig;
+  setLiveConfig: (config: LiveDataConfig) => void;
   onGenerate: () => void;
   isLoading: boolean;
 }
@@ -63,13 +34,39 @@ export const PrdEditor: React.FC<PrdEditorProps> = ({
   setPrdText,
   apiKey,
   setApiKey,
+  aisApiKey,
+  setAisApiKey,
+  liveConfig,
+  setLiveConfig,
   onGenerate,
   isLoading
 }) => {
   const [showSettings, setShowSettings] = useState(false);
+  const validation = useMemo(() => validatePRD(prdText), [prdText]);
+  const liveDomain = useMemo(() => {
+    if (!validation.isValid) return null;
+    return detectDomainFromValidation(validation.dashboardTitle, validation.widgets);
+  }, [validation]);
 
-  const applyTemplate = (key: keyof typeof TEMPLATES) => {
-    setPrdText(TEMPLATES[key].text);
+  const statusIcon: Record<PrdCheckStatus, string> = {
+    pass: '✓',
+    warn: '!',
+    fail: '✕'
+  };
+
+  const statusStyles: Record<PrdCheckStatus, string> = {
+    pass: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
+    warn: 'text-amber-400 bg-amber-500/10 border-amber-500/20',
+    fail: 'text-rose-400 bg-rose-500/10 border-rose-500/20'
+  };
+
+  const widgetTypeStyles: Record<string, string> = {
+    gauge: 'text-blue-400 bg-blue-500/10 border-blue-500/20',
+    chart: 'text-indigo-400 bg-indigo-500/10 border-indigo-500/20',
+    metric: 'text-cyan-400 bg-cyan-500/10 border-cyan-500/20',
+    alert_list: 'text-rose-400 bg-rose-500/10 border-rose-500/20',
+    control_panel: 'text-amber-400 bg-amber-500/10 border-amber-500/20',
+    map: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
   };
 
   return (
@@ -87,45 +84,21 @@ export const PrdEditor: React.FC<PrdEditorProps> = ({
               : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white'
           }`}
         >
-          ⚙️ Claude Settings
+          ⚙️ API Settings
         </button>
       </div>
 
       {showSettings && (
-        <div className="bg-slate-950 border border-slate-800 rounded-lg p-3.5 mb-4 animate-fadeIn">
-          <label className="block text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1.5">
-            Claude API Key (Optional)
-          </label>
-          <input
-            type="password"
-            placeholder="sk-ant-api03..."
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 font-mono transition"
-          />
-          <p className="text-[10px] text-slate-500 mt-1.5 leading-normal">
-            Uses Claude 3.5 Sonnet if provided. If blank, it runs in a high-fidelity interactive simulation mode.
-          </p>
-        </div>
+        <ApiSettingsPanel
+          groqKey={apiKey}
+          setGroqKey={setApiKey}
+          aisKey={aisApiKey}
+          setAisKey={setAisApiKey}
+          liveConfig={liveConfig}
+          setLiveConfig={setLiveConfig}
+          detectedDomain={liveDomain}
+        />
       )}
-
-      {/* Templates Selector */}
-      <div className="mb-4">
-        <label className="block text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1.5">
-          Load Predefined Specs
-        </label>
-        <div className="grid grid-cols-3 gap-2">
-          {Object.entries(TEMPLATES).map(([key, t]) => (
-            <button
-              key={key}
-              onClick={() => applyTemplate(key as keyof typeof TEMPLATES)}
-              className="text-[10px] bg-slate-800/80 hover:bg-slate-800 border border-slate-850 hover:border-slate-700 text-slate-300 px-2 py-1.5 rounded font-medium transition text-center truncate"
-            >
-              {t.title}
-            </button>
-          ))}
-        </div>
-      </div>
 
       {/* PRD Text Editor */}
       <div className="flex-1 flex flex-col min-h-64">
@@ -136,16 +109,96 @@ export const PrdEditor: React.FC<PrdEditorProps> = ({
           value={prdText}
           onChange={(e) => setPrdText(e.target.value)}
           className="flex-1 w-full bg-slate-950/80 border border-slate-850 rounded-lg p-3 text-xs text-slate-300 placeholder-slate-750 focus:outline-none focus:border-indigo-500 font-mono resize-none leading-relaxed transition"
-          placeholder="Paste or write your maritime product requirements here..."
+          placeholder={PRD_PLACEHOLDER}
         />
+      </div>
+
+      {/* PRD Validator & Widget Indicator */}
+      <div className="mt-3 bg-slate-950/80 border border-slate-850 rounded-lg p-3 space-y-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <span
+              className={`text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded border shrink-0 ${
+                validation.isValid
+                  ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/25'
+                  : prdText.trim()
+                    ? 'text-amber-400 bg-amber-500/10 border-amber-500/25'
+                    : 'text-slate-500 bg-slate-900 border-slate-800'
+              }`}
+            >
+              {validation.isValid ? 'PRD Ready' : prdText.trim() ? 'Needs Fixes' : 'Awaiting PRD'}
+            </span>
+            {prdText.trim() && (
+              <span className="text-[10px] text-slate-400 truncate">
+                {validation.dashboardTitle}
+              </span>
+            )}
+          </div>
+          <span
+            className={`text-[10px] font-bold px-2 py-1 rounded border shrink-0 ${
+              validation.widgetCount > 0
+                ? 'text-indigo-300 bg-indigo-500/15 border-indigo-500/30'
+                : 'text-slate-500 bg-slate-900 border-slate-800'
+            }`}
+          >
+            {validation.widgetCount} widget{validation.widgetCount === 1 ? '' : 's'} detected
+          </span>
+        </div>
+
+        {prdText.trim() && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+            {validation.checks.map((check) => (
+              <div
+                key={check.id}
+                className={`flex items-start gap-1.5 text-[10px] px-2 py-1 rounded border ${statusStyles[check.status]}`}
+                title={check.hint}
+              >
+                <span className="font-black shrink-0">{statusIcon[check.status]}</span>
+                <span className="font-semibold leading-tight">{check.label}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {validation.widgets.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 pt-0.5">
+            {validation.widgets.map((widget, index) => (
+              <span
+                key={`${widget.type}-${widget.title}-${index}`}
+                className={`text-[9px] font-semibold px-2 py-0.5 rounded border ${widgetTypeStyles[widget.type] || widgetTypeStyles.metric}`}
+              >
+                {widget.type.replace('_', ' ')} · {widget.title}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {validation.isValid && liveDomain && (
+          <p className="text-[10px] text-cyan-400/90 leading-normal">
+            {liveConfig.enabled ? 'Live mode ON' : 'Live mode OFF (simulation)'} · domain:{' '}
+            <span className="font-semibold">{liveDomain}</span> · refresh:{' '}
+            <span className="font-semibold">{liveConfig.pollIntervalSec}s</span>
+            {liveDomain === 'maritime' && !aisApiKey.trim() && (
+              <> · <span className="text-amber-400/90">add AIS key for vessel tracking</span></>
+            )}
+          </p>
+        )}
+
+        {prdText.trim() && !validation.isValid && (
+          <p className="text-[10px] text-slate-500 leading-normal">
+            Add bullet points under <span className="text-slate-400 font-semibold">UI Widgets Required</span> with
+            type keywords like <span className="text-slate-400">gauge</span>,{' '}
+            <span className="text-slate-400">chart</span>, or <span className="text-slate-400">control panel</span>.
+          </p>
+        )}
       </div>
 
       <button
         onClick={onGenerate}
-        disabled={isLoading || !prdText.trim()}
+        disabled={isLoading || !validation.isValid}
         className="w-full mt-4 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white font-bold text-xs py-3 rounded-lg shadow-lg shadow-indigo-600/10 disabled:opacity-40 disabled:pointer-events-none hover:shadow-indigo-500/20 active:scale-[0.98] transition duration-200"
       >
-        {isLoading ? '🤖 running Claude agents...' : '⚓ Run Agent Pipeline'}
+        {isLoading ? '🤖 running Groq agents...' : '⚓ Run Agent Pipeline'}
       </button>
     </div>
   );

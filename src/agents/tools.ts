@@ -59,50 +59,100 @@ export function searchIcons(query: string): { iconName: string; confidence: numb
 
 const REACT_NON_LUCIDE_COMPONENTS = new Set(['Fragment', 'Suspense', 'Profiler', 'StrictMode']);
 
+function parseIconImportList(importList: string): Map<string, string> {
+  const icons = new Map<string, string>();
+  for (const part of importList.split(',')) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const asMatch = trimmed.match(/^(.+?)\s+as\s+(.+)$/);
+    if (asMatch) {
+      icons.set(asMatch[2].trim(), asMatch[1].trim());
+    } else {
+      icons.set(trimmed, trimmed);
+    }
+  }
+  return icons;
+}
+
+/** PascalCase components declared in-file (e.g. function Chart) — not lucide icons. */
+function collectLocalComponentNames(code: string): Set<string> {
+  const names = new Set<string>();
+  const patterns = [
+    /(?:^|[\s;}])(?:export\s+)?(?:async\s+)?function\s+([A-Z][a-zA-Z0-9]*)\s*[\(<{]/gm,
+    /(?:^|[\s;}])(?:export\s+)?const\s+([A-Z][a-zA-Z0-9]*)\s*[=:]/gm,
+    /(?:^|[\s;}])(?:export\s+)?class\s+([A-Z][a-zA-Z0-9]*)(?:\s+extends|\s+implements|\s*\{)/gm
+  ];
+  for (const pattern of patterns) {
+    let m: RegExpExecArray | null;
+    while ((m = pattern.exec(code)) !== null) {
+      names.add(m[1]);
+    }
+  }
+  return names;
+}
+
 /**
  * Ensures every PascalCase JSX component used in the file is imported from lucide-react.
- * Fixes StackBlitz/runtime errors such as "Anchor is not defined".
+ * Strips duplicate react-icons/lucide imports that Groq sometimes adds alongside lucide-react.
  */
 export function ensureLucideImports(code: string): string {
+  const knownMappings = new Map<string, string>();
+
+  code = code.replace(
+    /import\s*\{([^}]*)\}\s*from\s*['"]react-icons\/lucide['"]\s*;?\n?/g,
+    (_, importList: string) => {
+      for (const [local, source] of parseIconImportList(importList)) {
+        knownMappings.set(local, source);
+      }
+      return '';
+    }
+  );
+
+  code = code.replace(
+    /import\s*\{([^}]*)\}\s*from\s*['"]lucide-react['"]\s*;?\n?/g,
+    (_, importList: string) => {
+      for (const [local, source] of parseIconImportList(importList)) {
+        knownMappings.set(local, source);
+      }
+      return '';
+    }
+  );
+
+  const localComponents = collectLocalComponentNames(code);
   const usedIcons = new Set<string>();
   const jsxComponentRegex = /<([A-Z][a-zA-Z0-9]*)\b/g;
   let match: RegExpExecArray | null;
   while ((match = jsxComponentRegex.exec(code)) !== null) {
     const name = match[1];
-    if (!REACT_NON_LUCIDE_COMPONENTS.has(name)) {
+    if (!REACT_NON_LUCIDE_COMPONENTS.has(name) && !localComponents.has(name)) {
       usedIcons.add(name);
     }
   }
 
-  if (usedIcons.size === 0) {
-    return code;
+  const importSpecs = new Map<string, string>();
+  for (const local of usedIcons) {
+    importSpecs.set(local, knownMappings.get(local) ?? local);
   }
 
-  const importMatch = code.match(/import\s*\{([^}]*)\}\s*from\s*['"]lucide-react['"]/);
-  const imported = new Set<string>();
-  if (importMatch) {
-    for (const part of importMatch[1].split(',')) {
-      const name = part.trim().split(/\s+as\s+/)[0].trim();
-      if (name) {
-        imported.add(name);
-      }
-    }
+  if (importSpecs.size === 0) {
+    return code.replace(/\n{3,}/g, '\n\n');
   }
 
-  const allIcons = [...new Set([...imported, ...usedIcons])].sort();
-  const importBlock = `import {\n  ${allIcons.join(',\n  ')}\n} from 'lucide-react';`;
+  const importParts = [...importSpecs.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([local, source]) => (local === source ? local : `${source} as ${local}`));
 
-  if (importMatch) {
-    return code.replace(/import\s*\{[^}]*\}\s*from\s*['"]lucide-react['"]\s*;?/, importBlock);
-  }
+  const importBlock = `import {\n  ${importParts.join(',\n  ')}\n} from 'lucide-react';`;
 
   const reactImport = code.match(/^import\s+.+from\s+['"]react['"];?\s*$/m);
   if (reactImport && reactImport.index !== undefined) {
     const insertAt = reactImport.index + reactImport[0].length;
-    return code.slice(0, insertAt) + `\n${importBlock}` + code.slice(insertAt);
+    code = code.slice(0, insertAt) + `\n${importBlock}` + code.slice(insertAt);
+  } else {
+    code = `${importBlock}\n\n${code}`;
   }
 
-  return `${importBlock}\n\n${code}`;
+  return code.replace(/\n{3,}/g, '\n\n');
 }
 
 /**

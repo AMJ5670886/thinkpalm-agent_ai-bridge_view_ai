@@ -1,5 +1,6 @@
-import type { DashboardLayout, WidgetSpec } from './types';
-import { getTelemetrySchema, searchIcons } from './tools';
+import type { DashboardLayout } from './types';
+import { parsePRD } from './PrdParser';
+import { queryGroq, stripMarkdownFences } from './groqApi';
 
 export class ClaudeArchitect {
   /**
@@ -14,125 +15,50 @@ export class ClaudeArchitect {
     await new Promise(resolve => setTimeout(resolve, 800));
 
     if (apiKey && apiKey.trim() !== '') {
-      log('Active Claude API Key detected. Delegating analysis to Claude 3.5 Sonnet...', 'info');
+      log('Active Groq API Key detected. Delegating analysis to Groq (Llama 3.3 70B)...', 'info');
       try {
-        const result = await this.queryClaudeAPI(prdText, apiKey, log);
-        log(`Claude completed analysis. Formulated dashboard layout: "${result.title}" with ${result.widgets.length} components.`, 'info');
+        const result = await this.queryGroqAPI(prdText, apiKey, log);
+        log(`Groq completed analysis. Formulated dashboard layout: "${result.title}" with ${result.widgets.length} components.`, 'info');
         return result;
       } catch (err) {
-        log(`Claude API query failed (${err instanceof Error ? err.message : String(err)}). Falling back to local rule-based engine.`, 'info');
+        log(`Groq API query failed (${err instanceof Error ? err.message : String(err)}). Falling back to local rule-based engine.`, 'info');
       }
     }
 
-    // Rule-based fallback engine (Mock Mode)
-    log('Running local rule-based Maritime parsing engine (Claude Mode)...', 'info');
+    // Rule-based fallback: parse widgets directly from user-entered PRD
+    log('Running local PRD parsing engine (simulation mode)...', 'info');
     await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    const textLower = prdText.toLowerCase();
-    let title = 'Vessel Operations Dashboard';
-    let description = 'Real-time telemetry and management controls for maritime operations.';
-    let shipType = 'Cargo Vessel';
-    let widgets: WidgetSpec[] = [];
 
-    if (textLower.includes('tanker') || textLower.includes('oil') || textLower.includes('cargo temp')) {
-      shipType = 'VLCC Oil Tanker';
-      title = 'VLCC Tanker Vessel Monitoring System';
-      description = 'Critical cargo tank temperature, inert gas pressure, and fuel consumption analytics.';
-    } else if (textLower.includes('crew') || textLower.includes('welfare') || textLower.includes('passenger') || textLower.includes('portal')) {
-      shipType = 'Passenger Cruise Vessel';
-      title = 'Crew Welfare & Watch Portal';
-      description = 'Safety status tracker, rest compliance logs, and crew personnel directory.';
-    } else if (textLower.includes('ballast') || textLower.includes('water') || textLower.includes('bilge')) {
-      shipType = 'Bulk Carrier';
-      title = 'Ballast Water & Tank Level Indicator';
-      description = 'Real-time tank indicators, pump statuses, and ballast water indicators.';
-    } else if (textLower.includes('fuel') || textLower.includes('optimizer') || textLower.includes('efficiency')) {
-      shipType = 'Container Carrier';
-      title = 'Vessel Fuel & Speed Optimizer';
-      description = 'Propulsion efficiency dashboard matching RPM commands with specific fuel flow curves.';
+    const parsed = parsePRD(prdText);
+
+    if (parsed.widgets.length === 0) {
+      throw new Error(
+        'No widgets found in PRD. Add bullet points under "UI Widgets Required" describing each gauge, chart, metric, alert list, or control panel.'
+      );
     }
 
-    log(`Identified Context: ${shipType} deployment profile. Invoking Telemetry Schema Tool...`, 'tool_call');
-    await new Promise(resolve => setTimeout(resolve, 600));
-    
-    const schemaFields = getTelemetrySchema(shipType);
-    log(`Telemetry Schema Tool returned ${schemaFields.length} recommended data structures.`, 'tool_response');
-    
-    for (const f of schemaFields) {
-      log(`Matching layout widget details for telemetry point "${f.label}"...`, 'info');
-      
-      let widgetType: WidgetSpec['type'] = 'metric';
-      let widgetSize: WidgetSpec['size'] = 'small';
-      
-      if (f.field === 'gps' || f.field === 'map') {
-        widgetType = 'map';
-        widgetSize = 'large';
-      } else if (f.field === 'fuel_rate' || f.field === 'engine_rpm' || f.field === 'ballast_level' || f.field === 'fuel_level') {
-        widgetType = 'gauge';
-        widgetSize = 'medium';
-      } else if (f.field === 'active_alarms' || f.field === 'alarms') {
-        widgetType = 'alert_list';
-        widgetSize = 'medium';
-      } else if (f.field === 'welfare_status' || f.field === 'fuel_efficiency') {
-        widgetType = 'chart';
-        widgetSize = 'medium';
-      }
-
-      log(`Calling Tool: Icon Selector for keyword "${f.field}"...`, 'tool_call');
-      const icons = searchIcons(f.field);
-      const chosenIcon = icons[0]?.iconName || 'Gauge';
-      log(`Icon Selector Tool matched keyword to icon: "${chosenIcon}" (Confidence: ${icons[0]?.confidence || 0})`, 'tool_response');
-
-      widgets.push({
-        id: `widget_${f.field}`,
-        type: widgetType,
-        title: f.label,
-        icon: chosenIcon,
-        color: f.color,
-        size: widgetSize,
-        unit: f.unit,
-        value: f.defaultVal,
-        threshold: f.min !== f.max ? f.max * 0.85 : undefined,
-        options: undefined
-      });
+    for (const widget of parsed.widgets) {
+      log(`Parsed PRD widget: "${widget.title}" (${widget.type})`, 'info');
     }
 
-    if (!widgets.some(w => w.type === 'alert_list')) {
-      widgets.push({
-        id: 'widget_alerts',
-        type: 'alert_list',
-        title: 'Safety & System Alarms',
-        icon: 'ShieldAlert',
-        color: 'rose',
-        size: 'medium',
-        value: 'System Normal'
-      });
-    }
+    log(`PRD parsing complete. Layout: "${parsed.title}" with ${parsed.widgets.length} components from your requirements.`, 'info');
 
-    widgets.push({
-      id: 'widget_controls',
-      type: 'control_panel',
-      title: 'Propulsion Mode Selector',
-      icon: 'Radio',
-      color: 'indigo',
-      size: 'small',
-      value: 'Eco Speed',
-      options: ['Eco Speed', 'Full Speed', 'Dynamic Positioning', 'Manual Helm']
-    });
-
-    log(`Rule-based parsing complete. Proposed layout: "${title}" with ${widgets.length} components.`, 'info');
-    
     return {
-      title,
-      description,
+      title: parsed.title,
+      description: parsed.description,
       columns: 3,
-      widgets
+      widgets: parsed.widgets
     };
   }
 
-  private async queryClaudeAPI(prdText: string, apiKey: string, _log: (msg: string) => void): Promise<DashboardLayout> {
+  private async queryGroqAPI(prdText: string, apiKey: string, _log: (msg: string) => void): Promise<DashboardLayout> {
     const prompt = `You are a Senior Maritime Software Architect Agent at ThinkPalm.
 Analyze the provided Product Requirements Document (PRD) text and design an interactive dashboard layout.
+
+CRITICAL: The output MUST strictly match the user's PRD. Only include widgets explicitly listed in the PRD.
+Do NOT add default widgets, extra controls, or telemetry not mentioned in the requirements.
+Extract the dashboard title from the "System:" line and the description from the "Purpose" section.
+For each bullet under "UI Widgets Required", create exactly one matching widget with the correct type, unit, color, range, threshold, and options as specified.
 
 Output a JSON object matching this schema. Return ONLY raw JSON, do NOT wrap it in markdown block quotes:
 {
@@ -158,34 +84,8 @@ Output a JSON object matching this schema. Return ONLY raw JSON, do NOT wrap it 
 PRD Spec:
 ${prdText}`;
 
-    // Note: Due to CORS, local browser testing might need proxy. We use direct fetch here.
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-        'dangerously-allow-browser': 'true'
-      } as any,
-      body: JSON.stringify({
-        model: 'claude-3-5-sonnet-20241022',
-        max_tokens: 4000,
-        messages: [{ role: 'user', content: prompt }]
-      })
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`Claude API HTTP ${response.status}: ${errText}`);
-    }
-
-    const data = await response.json();
-    const text = data.content?.[0]?.text;
-    if (!text) {
-      throw new Error('Empty response from Claude API');
-    }
-
-    const cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    const text = await queryGroq(prompt, apiKey);
+    const cleanText = stripMarkdownFences(text, 'json');
     const result = JSON.parse(cleanText) as DashboardLayout;
     return result;
   }

@@ -1,12 +1,41 @@
 import React, { useState, useEffect } from 'react';
 import type { DashboardLayout } from '../agents/types';
+import type { LiveDataConfig } from '../liveData/apiConfig';
+import { DEFAULT_LIVE_CONFIG } from '../liveData/apiConfig';
+import { useLiveData } from '../liveData/useLiveData';
 import * as Icons from 'lucide-react';
 
 interface DashboardPreviewProps {
   layout?: DashboardLayout;
+  aisApiKey?: string;
+  liveConfig?: LiveDataConfig;
 }
 
-export const DashboardPreview: React.FC<DashboardPreviewProps> = ({ layout }) => {
+function gaugePercent(value: number, min = 0, max = 100): number {
+  if (max <= min) return 0;
+  return Math.min(100, Math.max(0, ((value - min) / (max - min)) * 100));
+}
+
+function normalizeChart(values: number[]): number[] {
+  if (values.length === 0) return [45, 60, 52, 70, 85, 90, 78, 62, 88, 94, 85, 92];
+  const max = Math.max(...values, 1);
+  return values.map((v) => Math.max(8, (v / max) * 100));
+}
+
+export const DashboardPreview: React.FC<DashboardPreviewProps> = ({
+  layout,
+  aisApiKey,
+  liveConfig = DEFAULT_LIVE_CONFIG
+}) => {
+  const {
+    snapshot,
+    status,
+    error,
+    locationLabel,
+    feedStatus,
+    secondsUntilRefresh,
+    manualRefresh
+  } = useLiveData(layout, aisApiKey, liveConfig);
   const [time, setTime] = useState<string>('');
   const [widgetStates, setWidgetStates] = useState<{ [id: string]: any }>({});
   const [activeAlerts, setActiveAlerts] = useState<Array<{ id: string; text: string; severity: 'warn' | 'crit' | 'info'; active: boolean }>>([
@@ -24,20 +53,39 @@ export const DashboardPreview: React.FC<DashboardPreviewProps> = ({ layout }) =>
   }, []);
 
   useEffect(() => {
-    if (layout) {
-      const states: { [id: string]: any } = {};
-      layout.widgets.forEach(w => {
-        if (w.type === 'gauge') {
-          states[w.id] = typeof w.value === 'number' ? w.value : parseFloat(w.value as string) || 50;
-        } else if (w.type === 'control_panel') {
-          states[w.id] = w.options?.[0] || 'Eco Speed';
-        } else if (w.type === 'metric') {
-          states[w.id] = w.value;
-        }
-      });
-      setWidgetStates(states);
+    if (!layout) return;
+
+    const states: { [id: string]: any } = {};
+    layout.widgets.forEach((w) => {
+      const live = snapshot?.widgetValues[w.id];
+      if (w.type === 'gauge') {
+        states[w.id] =
+          typeof live?.value === 'number'
+            ? live.value
+            : typeof w.value === 'number'
+              ? w.value
+              : parseFloat(w.value as string) || 50;
+      } else if (w.type === 'control_panel') {
+        states[w.id] = w.options?.[0] || 'Eco Speed';
+      } else if (w.type === 'metric') {
+        states[w.id] = live?.value ?? w.value;
+      }
+    });
+    setWidgetStates(states);
+  }, [layout, snapshot]);
+
+  useEffect(() => {
+    if (snapshot?.alerts.length) {
+      setActiveAlerts(
+        snapshot.alerts.map((alert, index) => ({
+          id: alert.id || String(index),
+          text: alert.text,
+          severity: alert.severity,
+          active: true
+        }))
+      );
     }
-  }, [layout]);
+  }, [snapshot?.alerts]);
 
   if (!layout) {
     return (
@@ -93,20 +141,63 @@ export const DashboardPreview: React.FC<DashboardPreviewProps> = ({ layout }) =>
           </div>
         </div>
 
-        <div className="flex items-center space-x-3.5 bg-slate-900/40 border border-slate-850 p-2.5 rounded-lg text-[10px]">
-          <div className="flex flex-col items-end">
-            <span className="text-[9px] text-slate-500 font-bold uppercase">Telemetry Watchdog</span>
-            <span className="font-bold text-emerald-400 flex items-center">
-              <span className="w-1 h-1 rounded-full bg-emerald-400 mr-1 inline-block animate-ping"></span>
-              ONLINE
-            </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center space-x-3.5 bg-slate-900/40 border border-slate-850 p-2.5 rounded-lg text-[10px]">
+            <div className="flex flex-col items-end">
+              <span className="text-[9px] text-slate-500 font-bold uppercase">Live Data Feed</span>
+              <span className={`font-bold flex items-center ${
+                status === 'live' ? 'text-emerald-400' : status === 'loading' ? 'text-amber-400' : status === 'error' ? 'text-rose-400' : status === 'disabled' ? 'text-slate-500' : 'text-slate-500'
+              }`}>
+                <span className={`w-1 h-1 rounded-full mr-1 inline-block ${
+                  status === 'live' ? 'bg-emerald-400 animate-ping' : status === 'loading' ? 'bg-amber-400 animate-pulse' : 'bg-slate-500'
+                }`}></span>
+                {status === 'live' ? 'LIVE' : status === 'loading' ? 'SYNCING' : status === 'error' ? 'DEGRADED' : status === 'disabled' ? 'SIMULATED' : 'STANDBY'}
+              </span>
+            </div>
+            <div className="border-l border-slate-800 h-6"></div>
+            <div className="flex flex-col">
+              <span className="text-[9px] text-slate-500 font-bold uppercase">Open-Meteo</span>
+              <span className={`font-semibold capitalize ${
+                feedStatus.openMeteo === 'connected' ? 'text-emerald-400' : feedStatus.openMeteo === 'error' ? 'text-rose-400' : 'text-slate-400'
+              }`}>
+                {feedStatus.openMeteo}
+              </span>
+            </div>
+            <div className="border-l border-slate-800 h-6"></div>
+            <div className="flex flex-col">
+              <span className="text-[9px] text-slate-500 font-bold uppercase">AISstream</span>
+              <span className={`font-semibold capitalize ${
+                feedStatus.aisstream === 'connected' ? 'text-emerald-400' : feedStatus.aisstream === 'error' ? 'text-rose-400' : 'text-slate-500'
+              }`}>
+                {feedStatus.aisstream}
+              </span>
+            </div>
+            <div className="border-l border-slate-800 h-6"></div>
+            <div className="flex flex-col">
+              <span className="text-[9px] text-slate-500 font-bold uppercase">Next Sync</span>
+              <span className="text-slate-300 font-mono font-semibold">{secondsUntilRefresh}s</span>
+            </div>
+            <div className="border-l border-slate-800 h-6"></div>
+            <div className="flex flex-col">
+              <span className="text-[9px] text-slate-500 font-bold uppercase">Region</span>
+              <span className="text-slate-300 font-semibold max-w-32 truncate">{locationLabel || '---'}</span>
+            </div>
           </div>
-          <div className="border-l border-slate-800 h-6"></div>
-          <div className="flex flex-col">
-            <span className="text-[9px] text-slate-500 font-bold uppercase">Time Logs</span>
-            <span className="text-slate-300 font-mono font-semibold">{time || '---'}</span>
-          </div>
+          {liveConfig.enabled && (
+            <button
+              type="button"
+              onClick={manualRefresh}
+              className="text-[9px] font-bold px-2.5 py-2 rounded-lg border border-slate-800 bg-slate-900 text-slate-400 hover:text-white hover:border-slate-700 transition"
+            >
+              ↻ Refresh
+            </button>
+          )}
         </div>
+        {error && liveConfig.enabled && (
+          <p className="text-[10px] text-amber-400/90 mt-2">
+            Live feed notice: {error}. Showing latest available telemetry.
+          </p>
+        )}
       </header>
 
       {/* Main Grid View */}
@@ -115,7 +206,11 @@ export const DashboardPreview: React.FC<DashboardPreviewProps> = ({ layout }) =>
           const style = colorStyles[w.color] || colorStyles.blue;
           
           if (w.type === 'gauge') {
-            const currentVal = widgetStates[w.id] !== undefined ? widgetStates[w.id] : 50;
+            const live = snapshot?.widgetValues[w.id];
+            const min = live?.min ?? 0;
+            const max = live?.max ?? 100;
+            const currentVal = widgetStates[w.id] !== undefined ? widgetStates[w.id] : (typeof live?.value === 'number' ? live.value : 50);
+            const fillPercent = gaugePercent(currentVal, min, max);
             const isAlarm = w.threshold ? currentVal > w.threshold : false;
 
             return (
@@ -123,8 +218,15 @@ export const DashboardPreview: React.FC<DashboardPreviewProps> = ({ layout }) =>
                 isAlarm ? 'border-rose-500/30 bg-rose-955/5' : 'border-slate-850 hover:border-slate-700'
               }`}>
                 <div className="flex justify-between items-center mb-3">
-                  <span className="text-slate-400 text-xs font-bold uppercase tracking-wider">{w.title}</span>
-                  <div className={`p-1.5 rounded-lg ${isAlarm ? 'bg-rose-500/20 text-rose-400' : `${style.bg} ${style.text}`}`}>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="text-slate-400 text-xs font-bold uppercase tracking-wider truncate">{w.title}</span>
+                    {live?.source && live.source !== 'simulated' && liveConfig.enabled && (
+                      <span className="text-[7px] font-black px-1 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 shrink-0">
+                        LIVE
+                      </span>
+                    )}
+                  </div>
+                  <div className={`p-1.5 rounded-lg shrink-0 ${isAlarm ? 'bg-rose-500/20 text-rose-400' : `${style.bg} ${style.text}`}`}>
                     {getIcon(w.icon)}
                   </div>
                 </div>
@@ -138,7 +240,7 @@ export const DashboardPreview: React.FC<DashboardPreviewProps> = ({ layout }) =>
                         strokeWidth="6" 
                         fill="transparent" 
                         strokeDasharray="251"
-                        strokeDashoffset={251 - (251 * currentVal) / 100}
+                        strokeDashoffset={251 - (251 * fillPercent) / 100}
                         className="transition-all duration-300 ease-out"
                       />
                     </svg>
@@ -159,8 +261,9 @@ export const DashboardPreview: React.FC<DashboardPreviewProps> = ({ layout }) =>
                 <div className="mt-3">
                   <input
                     type="range"
-                    min="0"
-                    max="100"
+                    min={min}
+                    max={max}
+                    step={max > 100 ? 1 : 0.1}
                     value={currentVal}
                     onChange={(e) => handleStateChange(w.id, Number(e.target.value))}
                     className={`w-full bg-slate-800 rounded-lg cursor-pointer h-1.5 ${
@@ -173,11 +276,19 @@ export const DashboardPreview: React.FC<DashboardPreviewProps> = ({ layout }) =>
           }
 
           if (w.type === 'metric') {
+            const live = snapshot?.widgetValues[w.id];
             const currentVal = widgetStates[w.id] !== undefined ? widgetStates[w.id] : w.value;
             return (
               <div key={w.id} className="bg-slate-900/50 border border-slate-850 hover:border-slate-700 rounded-xl p-5 flex items-center justify-between shadow transition duration-300">
                 <div className="flex flex-col">
-                  <span className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">{w.title}</span>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <span className="text-slate-400 text-xs font-bold uppercase tracking-wider">{w.title}</span>
+                    {live?.source && live.source !== 'simulated' && liveConfig.enabled && (
+                      <span className="text-[7px] font-black px-1 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">
+                        LIVE
+                      </span>
+                    )}
+                  </div>
                   <div className="flex items-baseline space-x-1">
                     <span className="text-2xl font-black text-white">{currentVal}</span>
                     {w.unit && <span className="text-[10px] text-slate-500 font-bold uppercase">{w.unit}</span>}
@@ -228,14 +339,16 @@ export const DashboardPreview: React.FC<DashboardPreviewProps> = ({ layout }) =>
                 <div className="flex justify-between items-center mb-3">
                   <div>
                     <h3 className="text-slate-200 text-xs font-bold uppercase tracking-wider">{w.title}</h3>
-                    <p className="text-[9px] text-slate-550 font-medium">Auto-sampled data telemetry</p>
+                    <p className="text-[9px] text-slate-550 font-medium">
+                      {snapshot?.sources[0] ? `Live ${snapshot.sources[0]} hourly series` : 'Auto-sampled data telemetry'}
+                    </p>
                   </div>
                   <div className={`p-1.5 rounded-lg ${style.bg} ${style.text}`}>
                     {getIcon(w.icon)}
                   </div>
                 </div>
                 <div className="h-32 w-full flex items-end justify-between space-x-1.5 pt-3">
-                  {[45, 60, 52, 70, 85, 90, 78, 62, 88, 94, 85, 92].map((val, idx) => (
+                  {normalizeChart(snapshot?.chartSeries[w.id] || []).map((val, idx) => (
                     <div key={idx} className="flex-1 flex flex-col items-center group">
                       <div
                         style={{ height: `${val}%` }}
@@ -308,7 +421,9 @@ export const DashboardPreview: React.FC<DashboardPreviewProps> = ({ layout }) =>
                 <div className="flex justify-between items-center mb-3">
                   <div>
                     <h3 className="text-slate-200 text-xs font-bold uppercase tracking-wider">{w.title}</h3>
-                    <p className="text-[9px] text-slate-550 font-medium">AIS Voyage Mapping Grid</p>
+                    <p className="text-[9px] text-slate-550 font-medium">
+                      {snapshot?.vessel ? 'Live AIS Voyage Mapping Grid' : 'Voyage Mapping Grid'}
+                    </p>
                   </div>
                   <div className={`p-1.5 rounded-lg ${style.bg} ${style.text}`}>
                     {getIcon(w.icon)}
@@ -329,9 +444,19 @@ export const DashboardPreview: React.FC<DashboardPreviewProps> = ({ layout }) =>
                   </svg>
                   
                   <div className="absolute bottom-2.5 left-2.5 bg-slate-900/90 border border-slate-850 p-2 rounded flex flex-col space-y-0.5 text-[9px]">
-                    <span className="text-slate-550 font-bold">SHIP ID: <strong className="text-white">TP-CONTAINER</strong></span>
-                    <span className="text-slate-550 font-bold">ROUTE: <strong className="text-indigo-400">SINGAPORE → PORT SAID</strong></span>
-                    <span className="text-slate-550 font-bold">POSITION: <strong className="text-emerald-400">24°48'N, 056°22'E</strong></span>
+                    <span className="text-slate-550 font-bold">
+                      SHIP ID: <strong className="text-white">{snapshot?.vessel?.name || snapshot?.vessel?.mmsi || 'TP-CONTAINER'}</strong>
+                    </span>
+                    <span className="text-slate-550 font-bold">
+                      SPEED: <strong className="text-indigo-400">{snapshot?.vessel?.speedKnots?.toFixed(1) || '—'} kn</strong>
+                    </span>
+                    <span className="text-slate-550 font-bold">
+                      POSITION: <strong className="text-emerald-400">
+                        {snapshot?.vessel
+                          ? `${Math.abs(snapshot.vessel.latitude).toFixed(2)}°${snapshot.vessel.latitude >= 0 ? 'N' : 'S'}, ${Math.abs(snapshot.vessel.longitude).toFixed(2)}°${snapshot.vessel.longitude >= 0 ? 'E' : 'W'}`
+                          : String(widgetStates[w.id] || w.value || "24°48'N, 056°22'E")}
+                      </strong>
+                    </span>
                   </div>
                   
                   <div className="absolute top-2.5 right-2.5 flex items-center space-x-1.5">

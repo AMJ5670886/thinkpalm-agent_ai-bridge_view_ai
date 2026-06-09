@@ -1,5 +1,6 @@
 import type { DashboardLayout } from './types';
 import { searchIcons } from './tools';
+import { queryGroq, stripMarkdownFences } from './groqApi';
 
 export class ClaudeCoder {
   /**
@@ -14,17 +15,17 @@ export class ClaudeCoder {
     await new Promise(resolve => setTimeout(resolve, 800));
 
     if (apiKey && apiKey.trim() !== '') {
-      log('Delegating React code generation to Claude 3.5 Sonnet...', 'info');
+      log('Delegating React code generation to Groq (Llama 3.3 70B)...', 'info');
       try {
-        const code = await this.queryClaudeAPI(layout, apiKey, log);
-        log('Claude completed code generation successfully.', 'info');
+        const code = await this.queryGroqAPI(layout, apiKey, log);
+        log('Groq completed code generation successfully.', 'info');
         return code;
       } catch (err) {
-        log(`Claude code generator failed (${err instanceof Error ? err.message : String(err)}). Falling back to local generation.`, 'info');
+        log(`Groq code generator failed (${err instanceof Error ? err.message : String(err)}). Falling back to local generation.`, 'info');
       }
     }
 
-    log('Running local React component compiler (Claude Mode)...', 'info');
+    log('Running local React component compiler (simulation mode)...', 'info');
     await new Promise(resolve => setTimeout(resolve, 1000));
     
     const resolvedIcons: { [key: string]: string } = {};
@@ -358,7 +359,7 @@ ${stateInitializers}
 `;
   }
 
-  private async queryClaudeAPI(layout: DashboardLayout, apiKey: string, _log: (msg: string) => void): Promise<string> {
+  private async queryGroqAPI(layout: DashboardLayout, apiKey: string, _log: (msg: string) => void): Promise<string> {
     const prompt = `You are a Principal React & Tailwind Code Generator Agent.
 Create a complete, single-file React component representing the following maritime dashboard layout.
 The component must be written in TypeScript, compile cleanly, and use Tailwind CSS styles.
@@ -370,7 +371,7 @@ Widgets to include:
 ${JSON.stringify(layout.widgets, null, 2)}
 
 Requirements for the generated code:
-1. Include imports from "react" (useState, useEffect, etc.) and "lucide-react" icons.
+1. Include imports from "react" (useState, useEffect, etc.) and "lucide-react" icons only — never use "react-icons" or "react-icons/lucide".
 2. The component name must be default exported, e.g. "export default function Dashboard()".
 3. Use a gorgeous dark maritime color theme (bg-slate-950, deep slate cards, neon blue/emerald/amber borders and text glow effects).
 4. Implement actual dynamic states for all "gauge" sliders, "control_panel" toggle options, and alert items (allow user to toggle/interact with sliders and check/clear alerts).
@@ -379,39 +380,7 @@ Requirements for the generated code:
 
 Return ONLY raw TSX code. Do NOT wrap in markdown block quotes.`;
 
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-        'dangerously-allow-browser': 'true'
-      } as any,
-      body: JSON.stringify({
-        model: 'claude-3-5-sonnet-20241022',
-        max_tokens: 4000,
-        messages: [{ role: 'user', content: prompt }]
-      })
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`Claude API HTTP ${response.status}: ${errText}`);
-    }
-
-    const data = await response.json();
-    let text = data.content?.[0]?.text;
-    if (!text) {
-      throw new Error('Empty response from Claude API');
-    }
-
-    text = text.replace(/```typescript/g, '')
-               .replace(/```tsx/g, '')
-               .replace(/```javascript/g, '')
-               .replace(/```jsx/g, '')
-               .replace(/```/g, '')
-               .trim();
-
-    return text;
+    const text = await queryGroq(prompt, apiKey);
+    return stripMarkdownFences(text, 'code');
   }
 }
